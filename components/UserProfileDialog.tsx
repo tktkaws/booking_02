@@ -27,6 +27,9 @@ export default function UserProfileDialog({
   const [colorText, setColorText] = useState("#64748b");
   const [colorPick, setColorPick] = useState("#64748b");
   const [colorMap, setColorMap] = useState<Record<string, string>>({});
+  const [companyColorDefault, setCompanyColorDefault] = useState("#64748b");
+  const [companyColorText, setCompanyColorText] = useState("#64748b");
+  const [companyColorPick, setCompanyColorPick] = useState("#64748b");
 
   // open/close
   useEffect(() => {
@@ -54,6 +57,21 @@ export default function UserProfileDialog({
       }
       setDepartments((depts as Department[]) ?? []);
 
+      // company tag default color
+      let baseCompanyColor = "#64748b";
+      const { data: setting, error: sErr } = await supabase
+        .from("settings")
+        .select("company_color")
+        .maybeSingle();
+      if (abort) return;
+      if (sErr) {
+        setError(sErr.message);
+        return;
+      }
+      const defaultCompany = normalizeColor(((setting as any)?.company_color as string | undefined) ?? baseCompanyColor);
+      baseCompanyColor = defaultCompany;
+      setCompanyColorDefault(baseCompanyColor);
+
       // profile
       const { data: sess } = await supabase.auth.getSession();
       const uid = sess.session?.user?.id;
@@ -78,6 +96,10 @@ export default function UserProfileDialog({
       setDepartmentId(dep);
       setColorText(normalized);
       setColorPick(normalized);
+      const companyOverride = (cs?.company_color as string | undefined) ?? null;
+      const companyEffective = normalizeColor(companyOverride ?? baseCompanyColor);
+      setCompanyColorText(companyEffective);
+      setCompanyColorPick(companyEffective);
     })();
     return () => {
       abort = true;
@@ -131,6 +153,25 @@ export default function UserProfileDialog({
     setColorPick(color);
   }
 
+  function handleCompanyTextColor(v: string) {
+    setCompanyColorText(v);
+    if (/^#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$/.test(v.trim())) {
+      const normalized = normalizeColor(v);
+      setCompanyColorPick(normalized);
+    }
+  }
+
+  function handleCompanyPickColor(v: string) {
+    setCompanyColorPick(v);
+    setCompanyColorText(v);
+  }
+
+  function resetCompanyColor() {
+    const normalized = normalizeColor(companyColorDefault);
+    setCompanyColorText(normalized);
+    setCompanyColorPick(normalized);
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
@@ -144,12 +185,14 @@ export default function UserProfileDialog({
     }
     const color = normalizeColor(colorText);
     const nextMap = { ...colorMap, [departmentId]: color };
+    const companyColorValue = normalizeColor(companyColorPick);
+    const companyOverride = companyColorValue === normalizeColor(companyColorDefault) ? null : companyColorValue;
     const { error } = await supabase
       .from("profiles")
       .update({
         display_name: displayName.trim(),
         department_id: departmentId,
-        color_settings: { tag_colors: nextMap },
+        color_settings: { tag_colors: nextMap, company_color: companyOverride },
       })
       .eq("id", uid);
     setLoading(false);
@@ -289,6 +332,42 @@ export default function UserProfileDialog({
                   );
                 })
               )}
+            </div>
+          </section>
+          <section className="pt-4">
+            <h3 className="mb-2 text-sm font-medium">全社タグのカラー設定</h3>
+            <div className="border rounded p-3 space-y-3">
+              <div className="flex items-center gap-2 text-sm">
+                <span
+                  className="inline-block h-4 w-4 rounded border"
+                  style={{ backgroundColor: companyColorPick }}
+                  aria-label={`カラー ${companyColorPick}`}
+                />
+                <span>全社</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-3">
+                <input
+                  type="color"
+                  value={companyColorPick}
+                  onChange={(e) => handleCompanyPickColor(e.target.value)}
+                  className="h-9 w-14 cursor-pointer rounded border px-1"
+                />
+                <input
+                  type="text"
+                  value={companyColorText}
+                  onChange={(e) => handleCompanyTextColor(e.target.value)}
+                  className="w-32 rounded border px-2 py-1 font-mono"
+                  placeholder="#64748b"
+                />
+                <button
+                  type="button"
+                  onClick={resetCompanyColor}
+                  className="rounded border px-2 py-1 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                >
+                  デフォルト
+                </button>
+              </div>
+              <p className="text-xs text-zinc-500">半角英数字6桁のHEX値を入力してください</p>
             </div>
           </section>
           <div>

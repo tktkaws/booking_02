@@ -19,7 +19,8 @@ export default function BookingsTable({ refreshKey = 0 }: { refreshKey?: number 
   const supabase = useMemo(getBrowserSupabaseClient, []);
   const [rows, setRows] = useState<Row[]>([]);
   const [colorOverrides, setColorOverrides] = useState<Record<string, string>>({});
-  const [companyColor, setCompanyColor] = useState<string | null>(null);
+  const [companyOverride, setCompanyOverride] = useState<string | null>(null);
+  const [companyDefault, setCompanyDefault] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Row | null>(null);
@@ -67,7 +68,9 @@ export default function BookingsTable({ refreshKey = 0 }: { refreshKey?: number 
       if (abort) return;
       const cs = (prof as any)?.color_settings as Record<string, any> | undefined;
       const map = (cs?.tag_colors as Record<string, string> | undefined) ?? {};
+      const override = normalizeColor((cs?.company_color as string | null | undefined) ?? null);
       setColorOverrides(map);
+      setCompanyOverride(override);
     })();
     function onProfileUpdated() {
       // reload overrides
@@ -82,14 +85,16 @@ export default function BookingsTable({ refreshKey = 0 }: { refreshKey?: number 
           .maybeSingle();
         const cs = (prof as any)?.color_settings as Record<string, any> | undefined;
         const map = (cs?.tag_colors as Record<string, string> | undefined) ?? {};
+        const override = normalizeColor((cs?.company_color as string | null | undefined) ?? null);
         setColorOverrides(map);
+        setCompanyOverride(override);
       })();
     }
     window.addEventListener("profile-updated", onProfileUpdated as EventListener);
     async function loadSettings() {
       const { data: setting } = await supabase.from("settings").select("company_color").maybeSingle();
       const color = (setting as any)?.company_color as string | undefined;
-      setCompanyColor(typeof color === "string" ? color : null);
+      setCompanyDefault(normalizeColor(color ?? null));
     }
     loadSettings();
     function onSettingsUpdated() {
@@ -104,7 +109,10 @@ export default function BookingsTable({ refreshKey = 0 }: { refreshKey?: number 
   }, [supabase]);
 
   function tagColorFor(row: Row): string {
-    if (row.is_companywide && companyColor) return companyColor;
+    if (row.is_companywide) {
+      const companyColor = companyOverride ?? companyDefault ?? "#e5e7eb";
+      return companyColor;
+    }
     return colorOverrides[row.department_id] ?? (row.departments?.default_color ?? "#e5e7eb");
   }
 
@@ -147,7 +155,7 @@ export default function BookingsTable({ refreshKey = 0 }: { refreshKey?: number 
               <div className="col-span-2 p-2 border-t">
                 {(r.is_companywide || r.departments?.name) ? (
                   <span
-                    className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px]"
+                    className="inline-flex items-center rounded px-2 py-0.5 text-[11px]"
                     style={{
                       backgroundColor: tagColorFor(r),
                       color: chooseTextColor(tagColorFor(r)),
@@ -176,4 +184,17 @@ function chooseTextColor(hex: string): string {
   const b = num & 255;
   const l = 0.2126 * r + 0.7152 * g + 0.0722 * b;
   return l > 150 ? "#111827" : "#ffffff";
+}
+
+function normalizeColor(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (/^#([0-9a-fA-F]{6})$/.test(trimmed)) return trimmed.toLowerCase();
+  if (/^#([0-9a-fA-F]{3})$/.test(trimmed)) {
+    const r = trimmed[1];
+    const g = trimmed[2];
+    const b = trimmed[3];
+    return `#${r}${r}${g}${g}${b}${b}`.toLowerCase();
+  }
+  return null;
 }

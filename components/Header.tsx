@@ -80,7 +80,7 @@ export default function Header() {
               <span>{displayName ?? email}</span>
               {departmentName && (
                 <span
-                  className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px]"
+                  className="inline-flex items-center rounded px-2 py-0.5 text-[11px]"
                   style={{
                     backgroundColor: departmentColor ?? "#e5e7eb",
                     color: chooseTextColor(departmentColor ?? "#e5e7eb"),

@@ -23,7 +23,8 @@ export default function BookingDetailDialog({
 }) {
   const supabase = useMemo(getBrowserSupabaseClient, []);
   const dialogRef = useRef<HTMLDialogElement | null>(null);
-  const [companyColor, setCompanyColor] = useState<string | null>(null);
+  const [companyOverride, setCompanyOverride] = useState<string | null>(null);
+  const [companyDefault, setCompanyDefault] = useState<string | null>(null);
   const [colorOverrides, setColorOverrides] = useState<Record<string, string>>({});
   const [canEdit, setCanEdit] = useState(false);
   const [editMode, setEditMode] = useState(false);
@@ -107,7 +108,7 @@ export default function BookingDetailDialog({
       // settings color
       const { data: setting } = await supabase.from("settings").select("company_color").maybeSingle();
       const col = (setting as any)?.company_color as string | undefined;
-      if (!abort) setCompanyColor(typeof col === "string" ? col : null);
+      if (!abort) setCompanyDefault(normalizeColor(col ?? null));
       // current user's overrides and permission check
       const { data } = await supabase.auth.getSession();
       const uid = data.session?.user?.id;
@@ -122,7 +123,11 @@ export default function BookingDetailDialog({
         .maybeSingle();
       const cs = (prof as any)?.color_settings as Record<string, any> | undefined;
       const map = (cs?.tag_colors as Record<string, string> | undefined) ?? {};
-      if (!abort) setColorOverrides(map);
+      const override = normalizeColor((cs?.company_color as string | null | undefined) ?? null);
+      if (!abort) {
+        setColorOverrides(map);
+        setCompanyOverride(override);
+      }
 
       const myDept = (prof as any)?.department_id as string | undefined;
       const admin = Boolean((prof as any)?.is_admin);
@@ -151,7 +156,7 @@ export default function BookingDetailDialog({
   if (!row) return null;
 
   const tagColor = row.is_companywide
-    ? companyColor ?? "#e5e7eb"
+    ? companyOverride ?? companyDefault ?? "#e5e7eb"
     : colorOverrides[row.department_id] ?? (row.departments?.default_color ?? "#e5e7eb");
 
   return (
@@ -187,7 +192,7 @@ export default function BookingDetailDialog({
               </div>
               <div>
                 <span
-                  className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px]"
+                  className="inline-flex items-center rounded px-2 py-0.5 text-[11px]"
                   style={{
                     backgroundColor: tagColor,
                     color: chooseTextColor(tagColor),
@@ -334,6 +339,19 @@ function chooseTextColor(hex: string): string {
   const b = num & 255;
   const l = 0.2126 * r + 0.7152 * g + 0.0722 * b;
   return l > 150 ? "#111827" : "#ffffff";
+}
+
+function normalizeColor(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (/^#([0-9a-fA-F]{6})$/.test(trimmed)) return trimmed.toLowerCase();
+  if (/^#([0-9a-fA-F]{3})$/.test(trimmed)) {
+    const r = trimmed[1];
+    const g = trimmed[2];
+    const b = trimmed[3];
+    return `#${r}${r}${g}${g}${b}${b}`.toLowerCase();
+  }
+  return null;
 }
 
 
