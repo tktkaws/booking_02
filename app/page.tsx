@@ -36,7 +36,7 @@ export default function Home() {
 
         <BookingsTable refreshKey={refreshKey} />
 
-        <dialog ref={dialogRef} className="rounded-lg p-0 w-full max-w-xl backdrop:bg-black/40">
+        <dialog ref={dialogRef} className="rounded-lg p-0 w-full max-w-xl m-auto backdrop:bg-black/40">
           <form method="dialog">
             <div className="flex items-center justify-between border-b px-4 py-3">
               <h2 className="text-base font-semibold">新規予約</h2>

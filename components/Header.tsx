@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { getBrowserSupabaseClient } from "@/lib/supabase/client";
 import AuthDialog from "./AuthDialog";
 
@@ -56,7 +57,11 @@ export default function Header() {
 
   return (
     <header className="flex items-center justify-between border-b px-4 py-3">
-      <div className="font-medium">会議室予約</div>
+      <div className="font-medium">
+        <Link href="/" className="hover:opacity-80">
+          会議室予約
+        </Link>
+      </div>
       <div className="flex items-center gap-3">
         {email ? (
           <>
@@ -76,12 +81,20 @@ export default function Header() {
               )}
             </span>
             {isAdmin && (
-              <a
-                href="/admin/departments"
-                className="rounded-md border px-3 py-1.5 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
-              >
-                部署管理
-              </a>
+              <>
+                <a
+                  href="/admin/departments"
+                  className="rounded-md border px-3 py-1.5 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                >
+                  部署管理
+                </a>
+                <a
+                  href="/admin/users"
+                  className="rounded-md border px-3 py-1.5 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                >
+                  ユーザー管理
+                </a>
+              </>
             )}
             <button
               onClick={signOut}
