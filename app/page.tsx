@@ -1,13 +1,31 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import BookingForm from "@/components/BookingForm";
 import BookingsTable from "@/components/BookingsTable";
+import { getBrowserSupabaseClient } from "@/lib/supabase/client";
 
 export default function Home() {
   const [refreshKey, setRefreshKey] = useState(0);
   const dialogRef = useRef<HTMLDialogElement | null>(null);
+  const supabase = useMemo(getBrowserSupabaseClient, []);
+  const [authed, setAuthed] = useState(false);
+
+  useEffect(() => {
+    let unsub: (() => void) | undefined;
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      setAuthed(Boolean(data.session));
+      const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+        setAuthed(Boolean(session));
+      });
+      unsub = sub.subscription.unsubscribe;
+    })();
+    return () => {
+      unsub?.();
+    };
+  }, [supabase]);
 
   const onCreated = useMemo(
     () => () => {
@@ -25,18 +43,26 @@ export default function Home() {
             <Image className="dark:invert" src="/next.svg" alt="logo" width={80} height={16} />
             <h1 className="text-xl font-semibold">ホーム</h1>
           </div>
-          <button
-            type="button"
-            className="rounded bg-black px-4 py-2 text-white dark:bg-white dark:text-black"
-            onClick={() => dialogRef.current?.showModal()}
-          >
-            予約を作成
-          </button>
+          {authed && (
+            <button
+              type="button"
+              className="rounded bg-black px-4 py-2 text-white dark:bg-white dark:text-black"
+              onClick={() => dialogRef.current?.showModal()}
+            >
+              予約を作成
+            </button>
+          )}
         </div>
 
         <BookingsTable refreshKey={refreshKey} />
 
-        <dialog ref={dialogRef} className="rounded-lg p-0 w-full max-w-xl m-auto backdrop:bg-black/40">
+        <dialog
+          ref={dialogRef}
+          className="rounded-lg p-0 w-full max-w-xl m-auto backdrop:bg-black/40"
+          onClick={(e) => {
+            if (e.target === dialogRef.current) dialogRef.current?.close();
+          }}
+        >
           <form method="dialog">
             <div className="flex items-center justify-between border-b px-4 py-3">
               <h2 className="text-base font-semibold">新規予約</h2>

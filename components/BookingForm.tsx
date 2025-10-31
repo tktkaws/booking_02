@@ -37,28 +37,38 @@ export default function BookingForm({ onCreated }: { onCreated?: () => void }) {
   const [deptId, setDeptId] = useState<string | null>(null);
   const [authed, setAuthed] = useState(false);
 
-  // Load session and user's department
+  // Load session and user's department, and subscribe to auth changes
   useEffect(() => {
     let mounted = true;
-    (async () => {
+    async function loadFromSession() {
       const { data } = await supabase.auth.getSession();
       const session = data.session;
+      if (!mounted) return;
       setAuthed(!!session);
       const uid = session?.user?.id;
-      if (!uid || !mounted) return;
+      if (!uid) {
+        setDeptId(null);
+        return;
+      }
       const { data: prof, error } = await supabase
         .from("profiles")
         .select("id, department_id")
         .eq("id", uid)
         .maybeSingle();
+      if (!mounted) return;
       if (error) {
         setError(error.message);
         return;
       }
       setDeptId((prof as ProfileRow | null)?.department_id ?? null);
-    })();
+    }
+    loadFromSession();
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, _session) => {
+      loadFromSession();
+    });
     return () => {
       mounted = false;
+      sub.subscription.unsubscribe();
     };
   }, [supabase]);
 

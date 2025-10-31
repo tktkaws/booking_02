@@ -26,7 +26,7 @@ export default function BookingsTable({ refreshKey = 0 }: { refreshKey?: number 
 
   useEffect(() => {
     let abort = false;
-    (async () => {
+    async function loadBookings() {
       setLoading(true);
       setError(null);
       const { data, error } = await supabase
@@ -40,9 +40,15 @@ export default function BookingsTable({ refreshKey = 0 }: { refreshKey?: number 
         return;
       }
       setRows((data as Row[]) ?? []);
-    })();
+    }
+    loadBookings();
+    function onBookingsUpdated() {
+      loadBookings();
+    }
+    window.addEventListener("bookings-updated", onBookingsUpdated);
     return () => {
       abort = true;
+      window.removeEventListener("bookings-updated", onBookingsUpdated);
     };
   }, [supabase, refreshKey]);
 
