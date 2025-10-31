@@ -9,7 +9,7 @@ type Row = {
   start_at: string;
   end_at: string;
   is_companywide: boolean;
-  departments?: { name: string } | null;
+  departments?: { name: string; default_color?: string | null } | null;
 };
 
 export default function BookingsTable({ refreshKey = 0 }: { refreshKey?: number }) {
@@ -25,7 +25,7 @@ export default function BookingsTable({ refreshKey = 0 }: { refreshKey?: number 
       setError(null);
       const { data, error } = await supabase
         .from("bookings")
-        .select("id, title, start_at, end_at, is_companywide, departments(name)")
+        .select("id, title, start_at, end_at, is_companywide, departments(name, default_color)")
         .order("start_at", { ascending: true });
       if (abort) return;
       setLoading(false);
@@ -79,7 +79,20 @@ export default function BookingsTable({ refreshKey = 0 }: { refreshKey?: number 
                   </span>
                 )}
               </div>
-              <div className="col-span-2 p-2 border-t">{r.departments?.name ?? ""}</div>
+              <div className="col-span-2 p-2 border-t">
+                {r.departments?.name ? (
+                  <span
+                    className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px]"
+                    style={{
+                      backgroundColor: r.departments?.default_color ?? "#e5e7eb",
+                      color: chooseTextColor(r.departments?.default_color ?? "#e5e7eb"),
+                      border: "1px solid rgba(0,0,0,0.1)",
+                    }}
+                  >
+                    {r.departments.name}
+                  </span>
+                ) : null}
+              </div>
             </div>
           ))
         )}
@@ -88,3 +101,13 @@ export default function BookingsTable({ refreshKey = 0 }: { refreshKey?: number 
   );
 }
 
+function chooseTextColor(hex: string): string {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return "#111827";
+  const num = parseInt(m[1], 16);
+  const r = (num >> 16) & 255;
+  const g = (num >> 8) & 255;
+  const b = num & 255;
+  const l = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  return l > 150 ? "#111827" : "#ffffff";
+}
