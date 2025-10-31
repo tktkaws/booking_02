@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import UserProfileDialog from "@/components/UserProfileDialog";
 import { getBrowserSupabaseClient } from "@/lib/supabase/client";
 import AuthDialog from "./AuthDialog";
 
@@ -12,6 +13,7 @@ export default function Header() {
   const [departmentName, setDepartmentName] = useState<string | null>(null);
   const [departmentColor, setDepartmentColor] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
+  const [profileOpen, setProfileOpen] = useState(false);
 
   useEffect(() => {
     let unsub: (() => void) | undefined;
@@ -21,20 +23,25 @@ export default function Header() {
       if (!uid) {
         setDisplayName(null);
         setDepartmentName(null);
+        setDepartmentColor(null);
         return;
       }
       // fetch profile + department name
       const { data: prof } = await supabase
         .from("profiles")
-        .select("display_name, is_admin, departments(name, default_color)")
+        .select("display_name, is_admin, department_id, color_settings, departments(name, default_color)")
         .eq("id", uid)
         .maybeSingle();
       const dn = (prof as any)?.display_name ?? null;
       const depn = (prof as any)?.departments?.name ?? null;
       const depc = (prof as any)?.departments?.default_color ?? null;
+      const depId = (prof as any)?.department_id as string | undefined;
+      const cs = (prof as any)?.color_settings as Record<string, any> | undefined;
       setDisplayName(dn);
       setDepartmentName(depn);
-      setDepartmentColor(typeof depc === "string" ? depc : null);
+      const overrideMap = (cs?.tag_colors as Record<string, string> | undefined) ?? undefined;
+      const override = depId && overrideMap ? overrideMap[depId] : undefined;
+      setDepartmentColor(override ?? (typeof depc === "string" ? depc : null));
       setIsAdmin(Boolean((prof as any)?.is_admin));
     }
 
@@ -65,7 +72,11 @@ export default function Header() {
       <div className="flex items-center gap-3">
         {email ? (
           <>
-            <span className="text-sm text-zinc-600 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setProfileOpen(true)}
+              className="text-sm text-zinc-700 dark:text-zinc-200 flex items-center gap-2 rounded-md border px-3 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+            >
               <span>{displayName ?? email}</span>
               {departmentName && (
                 <span
@@ -79,7 +90,7 @@ export default function Header() {
                   {departmentName}
                 </span>
               )}
-            </span>
+            </button>
             {isAdmin && (
               <>
                 <a
@@ -102,6 +113,14 @@ export default function Header() {
             >
               ログアウト
             </button>
+            <UserProfileDialog
+              open={profileOpen}
+              onClose={() => setProfileOpen(false)}
+              onSaved={async () => {
+                const { data } = await supabase.auth.getSession();
+                await load(data.session);
+              }}
+            />
           </>
         ) : (
           <AuthDialog />

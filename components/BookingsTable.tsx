@@ -9,12 +9,15 @@ type Row = {
   start_at: string;
   end_at: string;
   is_companywide: boolean;
+  department_id: string;
   departments?: { name: string; default_color?: string | null } | null;
 };
 
 export default function BookingsTable({ refreshKey = 0 }: { refreshKey?: number }) {
   const supabase = useMemo(getBrowserSupabaseClient, []);
   const [rows, setRows] = useState<Row[]>([]);
+  const [colorOverrides, setColorOverrides] = useState<Record<string, string>>({});
+  const [companyColor, setCompanyColor] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -25,7 +28,7 @@ export default function BookingsTable({ refreshKey = 0 }: { refreshKey?: number 
       setError(null);
       const { data, error } = await supabase
         .from("bookings")
-        .select("id, title, start_at, end_at, is_companywide, departments(name, default_color)")
+        .select("id, title, start_at, end_at, is_companywide, department_id, departments(name, default_color)")
         .order("start_at", { ascending: true });
       if (abort) return;
       setLoading(false);
@@ -39,6 +42,62 @@ export default function BookingsTable({ refreshKey = 0 }: { refreshKey?: number 
       abort = true;
     };
   }, [supabase, refreshKey]);
+
+  // load user color overrides once and when profile updates
+  useEffect(() => {
+    let abort = false;
+    (async () => {
+      const { data } = await supabase.auth.getSession();
+      const uid = data.session?.user?.id;
+      if (!uid) return;
+      const { data: prof } = await supabase
+        .from("profiles")
+        .select("color_settings")
+        .eq("id", uid)
+        .maybeSingle();
+      if (abort) return;
+      const cs = (prof as any)?.color_settings as Record<string, any> | undefined;
+      const map = (cs?.tag_colors as Record<string, string> | undefined) ?? {};
+      setColorOverrides(map);
+    })();
+    function onProfileUpdated() {
+      // reload overrides
+      (async () => {
+        const { data } = await supabase.auth.getSession();
+        const uid = data.session?.user?.id;
+        if (!uid) return;
+        const { data: prof } = await supabase
+          .from("profiles")
+          .select("color_settings")
+          .eq("id", uid)
+          .maybeSingle();
+        const cs = (prof as any)?.color_settings as Record<string, any> | undefined;
+        const map = (cs?.tag_colors as Record<string, string> | undefined) ?? {};
+        setColorOverrides(map);
+      })();
+    }
+    window.addEventListener("profile-updated", onProfileUpdated as EventListener);
+    async function loadSettings() {
+      const { data: setting } = await supabase.from("settings").select("company_color").maybeSingle();
+      const color = (setting as any)?.company_color as string | undefined;
+      setCompanyColor(typeof color === "string" ? color : null);
+    }
+    loadSettings();
+    function onSettingsUpdated() {
+      loadSettings();
+    }
+    window.addEventListener("settings-updated", onSettingsUpdated);
+    return () => {
+      abort = true;
+      window.removeEventListener("profile-updated", onProfileUpdated as EventListener);
+      window.removeEventListener("settings-updated", onSettingsUpdated);
+    };
+  }, [supabase]);
+
+  function tagColorFor(row: Row): string {
+    if (row.is_companywide && companyColor) return companyColor;
+    return colorOverrides[row.department_id] ?? (row.departments?.default_color ?? "#e5e7eb");
+  }
 
   function fmtDate(iso: string) {
     const d = new Date(iso);
@@ -80,16 +139,16 @@ export default function BookingsTable({ refreshKey = 0 }: { refreshKey?: number 
                 )}
               </div>
               <div className="col-span-2 p-2 border-t">
-                {r.departments?.name ? (
+                {(r.is_companywide || r.departments?.name) ? (
                   <span
                     className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px]"
                     style={{
-                      backgroundColor: r.departments?.default_color ?? "#e5e7eb",
-                      color: chooseTextColor(r.departments?.default_color ?? "#e5e7eb"),
+                      backgroundColor: tagColorFor(r),
+                      color: chooseTextColor(tagColorFor(r)),
                       border: "1px solid rgba(0,0,0,0.1)",
                     }}
                   >
-                    {r.departments.name}
+                    {r.is_companywide ? "全社" : r.departments?.name}
                   </span>
                 ) : null}
               </div>

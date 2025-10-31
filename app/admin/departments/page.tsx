@@ -20,6 +20,10 @@ export default function DepartmentsAdminPage() {
   const [submitting, setSubmitting] = useState(false);
   const [editRow, setEditRow] = useState<Dept | null>(null);
   const dialogRef = useRef<HTMLDialogElement | null>(null);
+  // settings: company_color
+  const [companyColorText, setCompanyColorText] = useState<string>("#64748b");
+  const [companyColorPick, setCompanyColorPick] = useState<string>("#64748b");
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
 
   const openCreate = useCallback(() => {
     setEditRow(null);
@@ -67,6 +71,24 @@ export default function DepartmentsAdminPage() {
         return;
       }
       setRows((depts as Dept[]) ?? []);
+
+      // Load settings (company_color)
+      const { data: setting, error: sErr } = await supabase
+        .from("settings")
+        .select("company_color")
+        .maybeSingle();
+      if (sErr) {
+        // settings may be empty; ignore error if no rows
+      }
+      const color = (setting as any)?.company_color as string | undefined;
+      if (color && /^#([0-9a-fA-F]{6})$/.test(color.trim())) {
+        setCompanyColorText(color);
+        setCompanyColorPick(color);
+      } else {
+        setCompanyColorText("#64748b");
+        setCompanyColorPick("#64748b");
+      }
+      setSettingsLoaded(true);
     })();
     return () => {
       abort = true;
@@ -122,6 +144,41 @@ export default function DepartmentsAdminPage() {
       return;
     }
     await refresh();
+  }
+
+  function normalizeColor(v: string): string {
+    const s = (v || "").trim();
+    if (/^#([0-9a-fA-F]{6})$/.test(s)) return s.toLowerCase();
+    if (/^#([0-9a-fA-F]{3})$/.test(s)) {
+      const r = s[1];
+      const g = s[2];
+      const b = s[3];
+      return `#${r}${r}${g}${g}${b}${b}`.toLowerCase();
+    }
+    return "#64748b";
+  }
+
+  async function saveCompanyColor() {
+    setSubmitting(true);
+    setError(null);
+    const color = normalizeColor(companyColorText);
+    // Ensure single row: delete all, then insert one
+    const { error: delErr } = await supabase.from("settings").delete().neq("company_color", null);
+    if (delErr) {
+      setSubmitting(false);
+      setError(delErr.message);
+      return;
+    }
+    const { error: insErr } = await supabase.from("settings").insert({ company_color: color });
+    setSubmitting(false);
+    if (insErr) {
+      setError(insErr.message);
+      return;
+    }
+    setCompanyColorText(color);
+    setCompanyColorPick(color);
+    // notify listeners (e.g., bookings list) to refresh
+    window.dispatchEvent(new CustomEvent("settings-updated"));
   }
 
   if (isAdmin === null) {
@@ -191,6 +248,46 @@ export default function DepartmentsAdminPage() {
                 </div>
               ))
             )}
+          </div>
+        </section>
+
+        <section className="mt-6">
+          <h2 className="mb-2 text-base font-semibold">全社タグのカラー設定</h2>
+          <div className="flex flex-wrap items-center gap-4">
+            <label className="text-sm inline-flex items-center gap-2">
+              <span>カラー</span>
+              <input
+                type="color"
+                value={companyColorPick}
+                onChange={(e) => {
+                  setCompanyColorPick(e.target.value);
+                  setCompanyColorText(e.target.value);
+                }}
+                className="h-10 w-20 cursor-pointer rounded border px-1"
+              />
+            </label>
+            <input
+              type="text"
+              value={companyColorText}
+              onChange={(e) => {
+                const v = e.target.value;
+                setCompanyColorText(v);
+                if (/^#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$/.test(v.trim())) {
+                  const n = normalizeColor(v);
+                  setCompanyColorPick(n);
+                }
+              }}
+              className="w-40 rounded border px-3 py-2 font-mono text-sm"
+              placeholder="#64748b"
+            />
+            <button
+              type="button"
+              onClick={saveCompanyColor}
+              disabled={!settingsLoaded || submitting}
+              className="rounded bg-black px-4 py-2 text-white disabled:opacity-50 dark:bg-white dark:text-black"
+            >
+              {submitting ? "保存中..." : "保存"}
+            </button>
           </div>
         </section>
 
