@@ -2,10 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { getBrowserSupabaseClient } from "@/lib/supabase/client";
+import BookingDetailDialog from "@/components/BookingDetailDialog";
 
 type Row = {
   id: number;
   title: string;
+  description?: string | null;
   start_at: string;
   end_at: string;
   is_companywide: boolean;
@@ -20,6 +22,7 @@ export default function BookingsTable({ refreshKey = 0 }: { refreshKey?: number 
   const [companyColor, setCompanyColor] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Row | null>(null);
 
   useEffect(() => {
     let abort = false;
@@ -28,7 +31,7 @@ export default function BookingsTable({ refreshKey = 0 }: { refreshKey?: number 
       setError(null);
       const { data, error } = await supabase
         .from("bookings")
-        .select("id, title, start_at, end_at, is_companywide, department_id, departments(name, default_color)")
+        .select("id, title, description, start_at, end_at, is_companywide, department_id, departments(name, default_color)")
         .order("start_at", { ascending: true });
       if (abort) return;
       setLoading(false);
@@ -126,18 +129,15 @@ export default function BookingsTable({ refreshKey = 0 }: { refreshKey?: number 
           <div className="col-span-12 p-3 text-sm text-zinc-600">予約はありません</div>
         ) : (
           rows.map((r) => (
-            <div key={r.id} className="contents text-sm">
+            <div
+              key={r.id}
+              className="contents text-sm cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-900"
+              onClick={() => setSelected(r)}
+            >
               <div className="col-span-3 p-2 border-t">{fmtDate(r.start_at)}</div>
               <div className="col-span-2 p-2 border-t">{fmtTime(r.start_at)}</div>
               <div className="col-span-2 p-2 border-t">{fmtTime(r.end_at)}</div>
-              <div className="col-span-3 p-2 border-t">
-                {r.title}
-                {r.is_companywide && (
-                  <span className="ml-2 inline-block rounded bg-zinc-200 px-2 py-0.5 text-[10px] text-zinc-800 dark:bg-zinc-700 dark:text-zinc-100">
-                    全社
-                  </span>
-                )}
-              </div>
+              <div className="col-span-3 p-2 border-t">{r.title}</div>
               <div className="col-span-2 p-2 border-t">
                 {(r.is_companywide || r.departments?.name) ? (
                   <span
@@ -156,6 +156,7 @@ export default function BookingsTable({ refreshKey = 0 }: { refreshKey?: number 
           ))
         )}
       </div>
+      <BookingDetailDialog row={selected as any} onClose={() => setSelected(null)} />
     </section>
   );
 }
