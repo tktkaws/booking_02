@@ -40,8 +40,9 @@ export default function Home() {
       <main className="mx-auto w-full max-w-5xl p-6 bg-white dark:bg-black">
         <div className="mb-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <Image className="dark:invert" src="/next.svg" alt="logo" width={80} height={16} />
-            <h1 className="text-xl font-semibold">ホーム</h1>
+            <button className="rounded-md border px-3 py-1.5 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800">月</button>
+            <button className="rounded-md border px-3 py-1.5 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800">週</button>
+            <button className="rounded-md border px-3 py-1.5 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800">リスト</button>
           </div>
           {authed && (
             <button
