@@ -59,7 +59,7 @@ export default function Home() {
 
         <dialog
           ref={dialogRef}
-          className="rounded-lg p-0 w-full max-w-xl m-auto backdrop:bg-black/40"
+          className="rounded-lg p-0 w-full max-w-4xl h-[80vh] m-auto overflow-y-auto backdrop:bg-black/40"
           onClick={(e) => {
             if (e.target === dialogRef.current) dialogRef.current?.close();
           }}

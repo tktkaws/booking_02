@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import UserProfileDialog from "@/components/UserProfileDialog";
 import { getBrowserSupabaseClient } from "@/lib/supabase/client";
 import AuthDialog from "./AuthDialog";
 
 export default function Header() {
-  const supabase = useMemo(getBrowserSupabaseClient, []);
+  const supabase = useMemo(() => getBrowserSupabaseClient(), []);
   const [email, setEmail] = useState<string | null>(null);
   const [displayName, setDisplayName] = useState<string | null>(null);
   const [departmentName, setDepartmentName] = useState<string | null>(null);
@@ -15,21 +15,24 @@ export default function Header() {
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
   const [profileOpen, setProfileOpen] = useState(false);
 
-  useEffect(() => {
-    let unsub: (() => void) | undefined;
-    async function load(session: Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"]) {
+  const loadProfile = useCallback(
+    async (
+      session: Awaited<ReturnType<typeof supabase.auth.getSession>>["data"]["session"]
+    ) => {
       setEmail(session?.user?.email ?? null);
       const uid = session?.user?.id;
       if (!uid) {
         setDisplayName(null);
         setDepartmentName(null);
         setDepartmentColor(null);
+        setIsAdmin(false);
         return;
       }
-      // fetch profile + department name
       const { data: prof } = await supabase
         .from("profiles")
-        .select("display_name, is_admin, department_id, color_settings, departments(name, default_color)")
+        .select(
+          "display_name, is_admin, department_id, color_settings, departments(name, default_color)"
+        )
         .eq("id", uid)
         .maybeSingle();
       const dn = (prof as any)?.display_name ?? null;
@@ -43,20 +46,24 @@ export default function Header() {
       const override = depId && overrideMap ? overrideMap[depId] : undefined;
       setDepartmentColor(override ?? (typeof depc === "string" ? depc : null));
       setIsAdmin(Boolean((prof as any)?.is_admin));
-    }
+    },
+    [supabase]
+  );
 
+  useEffect(() => {
+    let unsub: (() => void) | undefined;
     (async () => {
       const { data } = await supabase.auth.getSession();
-      await load(data.session);
+      await loadProfile(data.session);
       const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-        load(session);
+        loadProfile(session);
       });
       unsub = sub.subscription.unsubscribe;
     })();
     return () => {
       unsub?.();
     };
-  }, [supabase]);
+  }, [loadProfile, supabase]);
 
   async function signOut() {
     await supabase.auth.signOut();
@@ -118,7 +125,7 @@ export default function Header() {
               onClose={() => setProfileOpen(false)}
               onSaved={async () => {
                 const { data } = await supabase.auth.getSession();
-                await load(data.session);
+                await loadProfile(data.session);
               }}
             />
           </>
