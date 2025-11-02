@@ -2,64 +2,156 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getBrowserSupabaseClient } from "@/lib/supabase/client";
+import { useDayBookings } from "@/lib/hooks/useDayBookings";
+import { validateReservation, type ValidationError } from "@/lib/validation/reservation";
+import type { BookingWithDepartment } from "@/types/booking";
 
-export type BookingRow = {
-  id: number;
-  title: string;
-  description: string | null;
-  start_at: string;
-  end_at: string;
-  is_companywide: boolean;
-  department_id: string;
-  departments?: { name: string; default_color?: string | null } | null;
-};
-
-export default function BookingDetailDialog({
-  row,
-  onClose,
-}: {
-  row: BookingRow | null;
+interface BookingDetailDialogProps {
+  row: BookingWithDepartment | null;
   onClose: () => void;
-}) {
+}
+
+export default function BookingDetailDialog({ row, onClose }: BookingDetailDialogProps) {
   const supabase = useMemo(() => getBrowserSupabaseClient(), []);
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const [companyOverride, setCompanyOverride] = useState<string | null>(null);
   const [companyDefault, setCompanyDefault] = useState<string | null>(null);
   const [colorOverrides, setColorOverrides] = useState<Record<string, string>>({});
-  const [dayBookings, setDayBookings] = useState<BookingRow[]>([]);
-  const [dayLoading, setDayLoading] = useState(false);
-  const [dayError, setDayError] = useState<string | null>(null);
   const [canEdit, setCanEdit] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // edit form fields
   const [date, setDate] = useState("");
   const [startTime, setStartTime] = useState("09:00");
-  const [endTime, setEndTime] = useState("09:15");
+  const [endTime, setEndTime] = useState("10:00");
   const [title, setTitle] = useState("");
   const [memo, setMemo] = useState("");
   const [companyWide, setCompanyWide] = useState(false);
-  const timeList = useMemo(() => buildTimeOptions(), []);
+  const [validationErrors, setValidationErrors] = useState<ValidationError[]>([]);
+
+  const timeOptions = useMemo(() => buildTimeOptions(), []);
+  const startIndex = useMemo(() => timeOptions.indexOf(startTime), [startTime, timeOptions]);
+  const endOptions = useMemo(() => {
+    if (startIndex === -1) return timeOptions;
+    return timeOptions.filter((option) => timeOptions.indexOf(option) > startIndex);
+  }, [startIndex, timeOptions]);
+
+  const { bookings: dayBookings, loading: dayLoading, error: dayError } = useDayBookings(date || null, {
+    excludeId: row?.id ?? null,
+  });
+
+  const open = !!row;
+
+  useEffect(() => {
+    const dlg = dialogRef.current;
+    if (!dlg) return;
+    if (open && !dlg.open) dlg.showModal();
+    if (!open && dlg.open) dlg.close();
+  }, [open]);
+
+  useEffect(() => {
+    if (!row) return;
+    const startDate = new Date(row.start_at);
+    const formattedDate = formatDate(startDate);
+    setDate(formattedDate);
+    setStartTime(toHHMM(row.start_at));
+    setEndTime(toHHMM(row.end_at));
+    setTitle(row.title);
+    setMemo(row.description ?? "");
+    setCompanyWide(row.is_companywide);
+    setEditMode(false);
+    setError(null);
+    setValidationErrors([]);
+  }, [row]);
+
+  useEffect(() => {
+    if (!editMode) return;
+    if (startIndex === -1) return;
+    const defaultEndIndex = Math.min(startIndex + 4, timeOptions.length - 1);
+    const defaultEnd = timeOptions[defaultEndIndex];
+    setEndTime((prev) => {
+      if (!prev) return defaultEnd;
+      const prevIndex = timeOptions.indexOf(prev);
+      if (prevIndex === -1 || prevIndex <= startIndex) {
+        return defaultEnd;
+      }
+      return prev;
+    });
+  }, [editMode, startIndex, timeOptions]);
+
+  useEffect(() => {
+    if (!open) return;
+    let abort = false;
+    (async () => {
+      const { data: setting } = await supabase.from("settings").select("company_color").maybeSingle();
+      const col = (setting as any)?.company_color as string | undefined;
+      if (!abort) setCompanyDefault(normalizeColor(col ?? null));
+
+      const { data } = await supabase.auth.getSession();
+      const uid = data.session?.user?.id;
+      if (!uid) {
+        if (!abort) setCanEdit(false);
+        return;
+      }
+      const { data: prof } = await supabase
+        .from("profiles")
+        .select("color_settings, department_id, is_admin")
+        .eq("id", uid)
+        .maybeSingle();
+      const cs = (prof as any)?.color_settings as Record<string, any> | undefined;
+      const map = (cs?.tag_colors as Record<string, string> | undefined) ?? {};
+      const normalized: Record<string, string> = {};
+      Object.entries(map).forEach(([key, value]) => {
+        const norm = normalizeColor(value);
+        if (norm) normalized[key] = norm;
+      });
+      const override = normalizeColor((cs?.company_color as string | null | undefined) ?? null);
+      if (!abort) {
+        setColorOverrides(normalized);
+        setCompanyOverride(override);
+      }
+
+      const myDept = (prof as any)?.department_id as string | undefined;
+      const admin = Boolean((prof as any)?.is_admin);
+      if (!abort && row) {
+        setCanEdit(Boolean(admin || (myDept && row.department_id === myDept)));
+      }
+    })();
+    return () => {
+      abort = true;
+    };
+  }, [open, row, supabase]);
+
+  useEffect(() => {
+    if (!editMode) {
+      setValidationErrors([]);
+      return;
+    }
+    const result = validateReservation(
+      { date: date || null, startTime: startTime || null, endTime: endTime || null, bookingId: row?.id ?? null },
+      dayBookings
+    );
+    setValidationErrors(result.errors);
+  }, [date, startTime, endTime, dayBookings, editMode, row?.id]);
+
+  if (!row) return null;
+
+  const tagColor = resolveTagColor(row, colorOverrides, companyOverride, companyDefault);
+  const hasErrors = validationErrors.length > 0;
 
   async function handleUpdate(e: React.FormEvent) {
     e.preventDefault();
     if (!row) return;
+    const result = validateReservation(
+      { date: date || null, startTime: startTime || null, endTime: endTime || null, bookingId: row.id },
+      dayBookings
+    );
+    setValidationErrors(result.errors);
+    if (!result.valid) return;
+
     setSaving(true);
     setError(null);
-    if (!date || !startTime || !endTime || !title) {
-      setSaving(false);
-      setError("必須項目を入力してください");
-      return;
-    }
-    const startIdx = timeList.indexOf(startTime);
-    const endIdx = timeList.indexOf(endTime);
-    if (startIdx === -1 || endIdx === -1 || endIdx <= startIdx) {
-      setSaving(false);
-      setError("終了は開始より後にしてください");
-      return;
-    }
     const startISO = composeIso(date, startTime);
     const endISO = composeIso(date, endTime);
     const { error } = await supabase
@@ -81,7 +173,7 @@ export default function BookingDetailDialog({
     onClose();
   }
 
-  async function onDelete() {
+  async function handleDelete() {
     if (!row) return;
     if (!confirm("この予約を削除します。よろしいですか？")) return;
     setSaving(true);
@@ -94,113 +186,6 @@ export default function BookingDetailDialog({
     window.dispatchEvent(new CustomEvent("bookings-updated"));
     onClose();
   }
-
-  const open = !!row;
-
-  useEffect(() => {
-    const dlg = dialogRef.current;
-    if (!dlg) return;
-    if (open && !dlg.open) dlg.showModal();
-    if (!open && dlg.open) dlg.close();
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) return;
-    let abort = false;
-    (async () => {
-      // settings color
-      const { data: setting } = await supabase.from("settings").select("company_color").maybeSingle();
-      const col = (setting as any)?.company_color as string | undefined;
-      if (!abort) setCompanyDefault(normalizeColor(col ?? null));
-      // current user's overrides and permission check
-      const { data } = await supabase.auth.getSession();
-      const uid = data.session?.user?.id;
-      if (!uid) {
-        if (!abort) setCanEdit(false);
-        return;
-      }
-      const { data: prof } = await supabase
-        .from("profiles")
-        .select("color_settings, department_id, is_admin")
-        .eq("id", uid)
-        .maybeSingle();
-      const cs = (prof as any)?.color_settings as Record<string, any> | undefined;
-      const map = (cs?.tag_colors as Record<string, string> | undefined) ?? {};
-      const override = normalizeColor((cs?.company_color as string | null | undefined) ?? null);
-      if (!abort) {
-        setColorOverrides(map);
-        setCompanyOverride(override);
-      }
-
-      const myDept = (prof as any)?.department_id as string | undefined;
-      const admin = Boolean((prof as any)?.is_admin);
-      if (!abort) setCanEdit(Boolean(admin || (row && myDept && row.department_id === myDept)));
-    })();
-    return () => {
-      abort = true;
-    };
-  }, [open, row, supabase]);
-
-  useEffect(() => {
-    if (!row) return;
-    // initialize edit fields from row
-    const d = new Date(row.start_at);
-    const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-    setDate(dateStr);
-    setStartTime(toHHMM(row.start_at));
-    setEndTime(toHHMM(row.end_at));
-    setTitle(row.title);
-    setMemo(row.description ?? "");
-    setCompanyWide(row.is_companywide);
-    setEditMode(false);
-    setError(null);
-  }, [row]);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function load(dateKey: string | null) {
-      if (!open || !dateKey) {
-        if (!cancelled) {
-          setDayLoading(false);
-          setDayError(null);
-          setDayBookings([]);
-        }
-        return;
-      }
-      setDayLoading(true);
-      setDayError(null);
-      const dayStart = new Date(`${dateKey}T00:00:00`);
-      const dayEnd = new Date(dayStart);
-      dayEnd.setDate(dayEnd.getDate() + 1);
-      const { data, error } = await supabase
-        .from("bookings")
-        .select("id, title, description, start_at, end_at, is_companywide, department_id, departments(name, default_color)")
-        .gte("start_at", dayStart.toISOString())
-        .lt("start_at", dayEnd.toISOString())
-        .order("start_at", { ascending: true });
-      if (cancelled) return;
-      setDayLoading(false);
-      if (error) {
-        setDayError(error.message);
-        setDayBookings([]);
-        return;
-      }
-      setDayBookings((data as BookingRow[]) ?? []);
-    }
-    load(date);
-    const handleUpdated = () => {
-      load(date);
-    };
-    window.addEventListener("bookings-updated", handleUpdated as EventListener);
-    return () => {
-      cancelled = true;
-      window.removeEventListener("bookings-updated", handleUpdated as EventListener);
-    };
-  }, [date, open, supabase]);
-
-  if (!row) return null;
-
-  const tagColor = resolveTagColor(row, colorOverrides, companyOverride, companyDefault);
 
   return (
     <dialog
@@ -225,36 +210,54 @@ export default function BookingDetailDialog({
       </form>
       <div className="px-4 py-4">
         <div className="grid gap-6 md:grid-cols-[minmax(0,1fr)_minmax(0,260px)]">
-          <div className="space-y-3">
+          <div className="space-y-4">
             {!editMode ? (
-              <>
-                <div className="flex items-start justify-between gap-3">
+              <div className="space-y-4">
+                <section>
+                  <span className="mb-1 block text-xs font-medium text-zinc-500">タイトル</span>
+                  <div className="rounded border px-3 py-2 text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                    {row.title}
+                  </div>
+                </section>
+                <section className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div>
-                    <div className="text-lg font-semibold">{row.title}</div>
-                    <div className="text-sm text-zinc-600">
-                      {fmtDate(row.start_at)} {fmtTime(row.start_at)} — {fmtTime(row.end_at)}
+                    <span className="mb-1 block text-xs font-medium text-zinc-500">日付</span>
+                    <div className="rounded border px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100">
+                      {fmtDate(row.start_at)}
                     </div>
                   </div>
                   <div>
-                    <span
-                      className="inline-flex items-center rounded px-2 py-0.5 text-[11px]"
-                      style={{
-                        backgroundColor: tagColor,
-                        color: chooseTextColor(tagColor),
-                        border: "1px solid rgba(0,0,0,0.1)",
-                      }}
-                    >
-                      {row.is_companywide ? "全社" : row.departments?.name ?? ""}
-                    </span>
+                    <span className="mb-1 block text-xs font-medium text-zinc-500">時間</span>
+                    <div className="rounded border px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100">
+                      {fmtTime(row.start_at)} — {fmtTime(row.end_at)}
+                    </div>
                   </div>
-                </div>
-                {row.description ? (
-                  <div className="whitespace-pre-wrap text-sm">{row.description}</div>
-                ) : (
-                  <div className="text-sm text-zinc-500">メモはありません</div>
-                )}
+                </section>
+                <section>
+                  <span className="mb-1 block text-xs font-medium text-zinc-500">部署</span>
+                  <span
+                    className="inline-flex items-center rounded px-2 py-0.5 text-[11px]"
+                    style={{
+                      backgroundColor: tagColor,
+                      color: chooseTextColor(tagColor),
+                      border: "1px solid rgba(0,0,0,0.1)",
+                    }}
+                  >
+                    {row.is_companywide ? "全社" : row.departments?.name ?? ""}
+                  </span>
+                </section>
+                <section>
+                  <span className="mb-1 block text-xs font-medium text-zinc-500">メモ</span>
+                  {row.description ? (
+                    <div className="whitespace-pre-wrap rounded border px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100">
+                      {row.description}
+                    </div>
+                  ) : (
+                    <div className="rounded border px-3 py-2 text-sm text-zinc-500">メモはありません</div>
+                  )}
+                </section>
                 {canEdit && (
-                  <div className="pt-2 flex items-center gap-2">
+                  <div className="flex items-center gap-2">
                     <button
                       type="button"
                       onClick={() => setEditMode(true)}
@@ -264,16 +267,16 @@ export default function BookingDetailDialog({
                     </button>
                     <button
                       type="button"
-                      onClick={onDelete}
+                      onClick={handleDelete}
                       className="rounded border px-3 py-1.5 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
                     >
                       削除
                     </button>
                   </div>
                 )}
-              </>
+              </div>
             ) : (
-              <form onSubmit={handleUpdate} className="space-y-3">
+              <form onSubmit={handleUpdate} className="space-y-3" aria-describedby="detail-reservation-errors">
                 {error && <div className="text-sm text-red-600">{error}</div>}
                 <label className="block text-sm">
                   <span className="mb-1 block">タイトル</span>
@@ -293,6 +296,7 @@ export default function BookingDetailDialog({
                     value={date}
                     onChange={(e) => setDate(e.target.value)}
                     className="w-full rounded border px-3 py-2"
+                    aria-invalid={hasError(validationErrors, "date") || hasError(validationErrors, "weekday")}
                   />
                 </label>
                 <label className="block text-sm">
@@ -302,8 +306,9 @@ export default function BookingDetailDialog({
                     value={startTime}
                     onChange={(e) => setStartTime(e.target.value)}
                     className="w-full rounded border px-3 py-2"
+                    aria-invalid={hasError(validationErrors, "startTime")}
                   >
-                    {timeList.map((t) => (
+                    {timeOptions.map((t) => (
                       <option key={t} value={t}>
                         {t}
                       </option>
@@ -317,8 +322,9 @@ export default function BookingDetailDialog({
                     value={endTime}
                     onChange={(e) => setEndTime(e.target.value)}
                     className="w-full rounded border px-3 py-2"
+                    aria-invalid={hasError(validationErrors, "endTime") || hasError(validationErrors, "range")}
                   >
-                    {timeList.map((t) => (
+                    {endOptions.map((t) => (
                       <option key={t} value={t}>
                         {t}
                       </option>
@@ -342,10 +348,16 @@ export default function BookingDetailDialog({
                   />
                   <span>全社</span>
                 </label>
+                <div id="detail-reservation-errors" aria-live="polite" className="space-y-1 text-xs text-red-600">
+                  {validationErrors.map((err, idx) => (
+                    <p key={`${err.field}-${idx}`}>{err.message}</p>
+                  ))}
+                  {dayError && <p>{dayError}</p>}
+                </div>
                 <div className="flex items-center gap-2">
                   <button
                     type="submit"
-                    disabled={saving}
+                    disabled={saving || hasErrors || dayLoading}
                     className="rounded bg-black px-4 py-2 text-white disabled:opacity-50 dark:bg-white dark:text-black"
                   >
                     {saving ? "保存中..." : "保存"}
@@ -374,12 +386,7 @@ export default function BookingDetailDialog({
             ) : (
               <ul className="space-y-2">
                 {dayBookings.map((b) => {
-                  const color = resolveTagColor(
-                    b,
-                    colorOverrides,
-                    companyOverride,
-                    companyDefault
-                  );
+                  const color = resolveTagColor(b, colorOverrides, companyOverride, companyDefault);
                   return (
                     <li
                       key={b.id}
@@ -417,10 +424,12 @@ function fmtDate(iso: string) {
   const d = new Date(iso);
   return d.toLocaleDateString();
 }
+
 function fmtTime(iso: string) {
   const d = new Date(iso);
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
+
 function chooseTextColor(hex: string): string {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
   if (!m) return "#111827";
@@ -430,19 +439,6 @@ function chooseTextColor(hex: string): string {
   const b = num & 255;
   const l = 0.2126 * r + 0.7152 * g + 0.0722 * b;
   return l > 150 ? "#111827" : "#ffffff";
-}
-
-function resolveTagColor(
-  booking: BookingRow,
-  overrides: Record<string, string>,
-  companyOverride: string | null,
-  companyDefault: string | null
-): string {
-  if (booking.is_companywide) {
-    return companyOverride ?? companyDefault ?? "#e5e7eb";
-  }
-  const override = overrides[booking.department_id];
-  return override ?? booking.departments?.default_color ?? "#e5e7eb";
 }
 
 function normalizeColor(value: string | null | undefined): string | null {
@@ -457,7 +453,6 @@ function normalizeColor(value: string | null | undefined): string | null {
   }
   return null;
 }
-
 
 function buildTimeOptions(): string[] {
   const opts: string[] = [];
@@ -478,10 +473,29 @@ function toHHMM(iso: string): string {
 }
 
 function composeIso(dateStr: string, timeStr: string): string {
-  const [y, m, d] = dateStr.split("-").map(Number);
-  const [hh, mm] = timeStr.split(":").map(Number);
-  const dt = new Date(y, (m ?? 1) - 1, d ?? 1, hh ?? 0, mm ?? 0, 0, 0);
-  return dt.toISOString();
+  return new Date(`${dateStr}T${timeStr}:00`).toISOString();
 }
 
-// component-scoped handlers are defined within the component scope above
+function formatDate(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function resolveTagColor(
+  booking: BookingWithDepartment,
+  overrides: Record<string, string>,
+  companyOverride: string | null,
+  companyDefault: string | null
+): string {
+  if (booking.is_companywide) {
+    return companyOverride ?? companyDefault ?? "#e5e7eb";
+  }
+  const override = overrides[booking.department_id];
+  return override ?? booking.departments?.default_color ?? "#e5e7eb";
+}
+
+function hasError(errors: ValidationError[], field: ValidationError["field"]): boolean {
+  return errors.some((err) => err.field === field);
+}

@@ -10,6 +10,7 @@ export default function Home() {
   const [refreshKey, setRefreshKey] = useState(0);
   const dialogRef = useRef<HTMLDialogElement | null>(null);
   const supabase = useMemo(getBrowserSupabaseClient, []);
+  const [formResetKey, setFormResetKey] = useState(0);
   const [authed, setAuthed] = useState(false);
 
   useEffect(() => {
@@ -26,6 +27,18 @@ export default function Home() {
       unsub?.();
     };
   }, [supabase]);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const handleClose = () => {
+      setFormResetKey((key) => key + 1);
+    };
+    dialog.addEventListener("close", handleClose);
+    return () => {
+      dialog.removeEventListener("close", handleClose);
+    };
+  }, []);
 
   const onCreated = useMemo(
     () => () => {
@@ -78,7 +91,7 @@ export default function Home() {
             </div>
           </form>
           <div className="px-4 py-4">
-            <BookingForm onCreated={onCreated} />
+            <BookingForm key={formResetKey} onCreated={onCreated} />
           </div>
         </dialog>
       </main>
