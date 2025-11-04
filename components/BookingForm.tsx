@@ -15,7 +15,15 @@ type ProfileRow = {
 const TIME_OPTIONS = buildTimeOptions();
 const WEEKEND_DAYS = new Set([0, 6]);
 
-export default function BookingForm({ onCreated }: { onCreated?: () => void }) {
+export default function BookingForm({
+  onCreated,
+  initialDate,
+  initialStartTime,
+}: {
+  onCreated?: () => void;
+  initialDate?: string | null;
+  initialStartTime?: string | null;
+}) {
   const supabase = useMemo(() => getBrowserSupabaseClient(), []);
   const [date, setDate] = useState("");
   const [startTime, setStartTime] = useState("09:00");
@@ -117,10 +125,17 @@ export default function BookingForm({ onCreated }: { onCreated?: () => void }) {
     };
   }, [supabase]);
 
+  // 1) カレンダーからの初期値があれば優先適用（日時選択→モーダル起動時など）
+  useEffect(() => {
+    if (initialDate) setDate(initialDate);
+    if (initialStartTime) setStartTime(initialStartTime);
+  }, [initialDate, initialStartTime]);
+
+  // 2) 何も指定がない場合は既定の初期化
   useEffect(() => {
     if (date) return;
-    const { initialDate, start, end } = computeInitialDateTime();
-    setDate(initialDate);
+    const { initialDate: d, start, end } = computeInitialDateTime();
+    setDate(d);
     setStartTime(start);
     setEndTime(end);
   }, [date]);

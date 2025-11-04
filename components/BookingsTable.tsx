@@ -15,7 +15,14 @@ type Row = {
   departments?: { name: string; default_color?: string | null } | null;
 };
 
-export default function BookingsTable({ refreshKey = 0 }: { refreshKey?: number }) {
+type BookingsTableProps = {
+  refreshKey?: number;
+  fromDate?: string | null; // YYYY-MM-DD
+  toDate?: string | null;   // YYYY-MM-DD
+  onlyEditable?: boolean;
+};
+
+export default function BookingsTable({ refreshKey = 0, fromDate = null, toDate = null, onlyEditable = false }: BookingsTableProps) {
   const supabase = useMemo(getBrowserSupabaseClient, []);
   const [rows, setRows] = useState<Row[]>([]);
   const [colorOverrides, setColorOverrides] = useState<Record<string, string>>({});
@@ -24,23 +31,39 @@ export default function BookingsTable({ refreshKey = 0 }: { refreshKey?: number 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Row | null>(null);
+  const [myDeptId, setMyDeptId] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState<boolean>(false);
 
   useEffect(() => {
     let abort = false;
     async function loadBookings() {
       setLoading(true);
       setError(null);
-      const { data, error } = await supabase
+      let query = supabase
         .from("bookings")
         .select("id, title, description, start_at, end_at, is_companywide, department_id, departments(name, default_color)")
         .order("start_at", { ascending: true });
+      // 範囲フィルタ
+      if (fromDate) {
+        const fromISO = new Date(`${fromDate}T00:00:00`).toISOString();
+        query = query.gte("start_at", fromISO);
+      }
+      if (toDate) {
+        const toISO = new Date(`${toDate}T23:59:59.999`).toISOString();
+        query = query.lte("start_at", toISO);
+      }
+      const { data, error } = await query;
       if (abort) return;
       setLoading(false);
       if (error) {
         setError(error.message);
         return;
       }
-      setRows((data as Row[]) ?? []);
+      let list = (data as Row[]) ?? [];
+      if (onlyEditable) {
+        list = list.filter((r) => canEditRow(r));
+      }
+      setRows(list);
     }
     loadBookings();
     function onBookingsUpdated() {
@@ -51,9 +74,9 @@ export default function BookingsTable({ refreshKey = 0 }: { refreshKey?: number 
       abort = true;
       window.removeEventListener("bookings-updated", onBookingsUpdated);
     };
-  }, [supabase, refreshKey]);
+  }, [supabase, refreshKey, fromDate, toDate, onlyEditable, myDeptId, isAdmin]);
 
-  // load user color overrides once and when profile updates
+  // load user color overrides and permissions once and when profile updates
   useEffect(() => {
     let abort = false;
     (async () => {
@@ -62,7 +85,7 @@ export default function BookingsTable({ refreshKey = 0 }: { refreshKey?: number 
       if (!uid) return;
       const { data: prof } = await supabase
         .from("profiles")
-        .select("color_settings")
+        .select("color_settings, department_id, is_admin")
         .eq("id", uid)
         .maybeSingle();
       if (abort) return;
@@ -71,6 +94,8 @@ export default function BookingsTable({ refreshKey = 0 }: { refreshKey?: number 
       const override = normalizeColor((cs?.company_color as string | null | undefined) ?? null);
       setColorOverrides(map);
       setCompanyOverride(override);
+      setMyDeptId((prof as any)?.department_id ?? null);
+      setIsAdmin(Boolean((prof as any)?.is_admin));
     })();
     function onProfileUpdated() {
       // reload overrides
@@ -80,7 +105,7 @@ export default function BookingsTable({ refreshKey = 0 }: { refreshKey?: number 
         if (!uid) return;
         const { data: prof } = await supabase
           .from("profiles")
-          .select("color_settings")
+          .select("color_settings, department_id, is_admin")
           .eq("id", uid)
           .maybeSingle();
         const cs = (prof as any)?.color_settings as Record<string, any> | undefined;
@@ -88,6 +113,8 @@ export default function BookingsTable({ refreshKey = 0 }: { refreshKey?: number 
         const override = normalizeColor((cs?.company_color as string | null | undefined) ?? null);
         setColorOverrides(map);
         setCompanyOverride(override);
+        setMyDeptId((prof as any)?.department_id ?? null);
+        setIsAdmin(Boolean((prof as any)?.is_admin));
       })();
     }
     window.addEventListener("profile-updated", onProfileUpdated as EventListener);
@@ -114,6 +141,12 @@ export default function BookingsTable({ refreshKey = 0 }: { refreshKey?: number 
       return companyColor;
     }
     return colorOverrides[row.department_id] ?? (row.departments?.default_color ?? "#e5e7eb");
+  }
+
+  function canEditRow(row: Row): boolean {
+    if (isAdmin) return true;
+    if (!myDeptId) return false;
+    return row.department_id === myDeptId;
   }
 
   function fmtDate(iso: string) {
